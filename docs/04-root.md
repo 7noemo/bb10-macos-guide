@@ -119,17 +119,12 @@ build/
 再验证一下：
 
 ```bash
-# 通过 SSH 连（默认已开启，密钥见下）
-ssh -i id_rsa4x devuser@169.254.0.1
-
-# 进去之后
-$ id
-uid=1000(devuser) ...
-$ __root id
-uid=0(root) ...
+# 注意：sshd_config 里是 AllowUsers=root，登录名就是 root，不是 devuser
+# macOS 自带 ssh 太新（OpenSSH 10 已移除 ssh-rsa），用仓库里的封装脚本
+./scripts/bbssh "id; ls /var/rootdata"
 ```
 
-`__root` 和 `u_root` 这两个 helper 就是提权入口，已经自动加进 pathtrust 了。
+`__root` 和 `u_root` 这两个 helper 就是提权入口，已经自动加进 pathtrust 了。root 登录后直接就是 uid=0。
 
 ---
 

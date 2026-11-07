@@ -45,7 +45,25 @@ cd bb10-macos-guide
 | 5 | [Root 之后玩什么](docs/05-post-root.md) | 终端、SSH、第三方应用 |
 | 6 | [出问题了](docs/06-troubleshooting.md) | 对症下药 |
 | 7 | [常见问题](docs/07-faq.md) | 你可能会问的 |
-| 8 | [Classic / Q20 实操记录](docs/08-classic-q20.md) | 一次真机全流程（含实测耗时与校验值） |
+| 8 | [Classic / Q20 实机记录](docs/08-classic-q20.md) | **一台 SQC100-3 从零刷到 root 的完整实录**（含所有坑） |
+
+### 已在真机验证
+
+2026-11，BlackBerry Classic `SQC100-3`（OS 10.3.3.3216）在本仓库流程下成功 root：
+
+```
+QNX BLACKBERRY-6B84 8.0.0 MSM8960_V3.2.1.1_N_CLASSICVZW_Rev:12 armle
+/var/rootdata: use.root  use.sshd  Term49.bar  installer
+```
+
+实测有三个官方文档没写的坑，都记在 [08 篇](docs/08-classic-q20.md) 里：
+
+1. **loader 缺失**：`loaders.dat` 里没有 SQC100-3 的 loader，需要借 SQC100-2 的改名
+2. **不能刷 `_os.exe`**：bb10mt 处理不了自建 exe，要刷拆分出来的 `0.unsigned`
+3. **OS 和 radio 必须一条命令一起刷**，否则设备刷完不启动
+
+另外 root 登录名是 **`root`** 不是 `devuser`，而 macOS 自带的 OpenSSH 10 已经
+连不上 BB10 的 OpenSSH 6.2 了 —— 用仓库里的 `scripts/bbssh`。
 
 ---
 

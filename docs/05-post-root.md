@@ -82,17 +82,21 @@ root 包里自带 **Term49**，位置：
 默认已开启（`patch.txt` 里 `use.sshd`）。
 
 ```bash
-# 默认私钥在 bb10-root/ 目录下（setup.sh 会放好）
-chmod 600 id_rsa4x
-ssh -i id_rsa4x devuser@169.254.0.1
+# 设备上的 sshd 是 2013 年的 OpenSSH 6.2，只支持 ssh-rsa(SHA-1)
+# macOS 自带的 OpenSSH 10 已经删掉了这个算法，直连一定失败
+# 用仓库里的封装脚本（paramiko + nc 中转）代替
+./scripts/bbssh              # 交互 shell
+./scripts/bbssh "ls /var"    # 单条命令
 ```
 
 | 项 | 值 |
 |---|---|
 | 地址 | `169.254.0.1`（USB 网线模式）或手机 WiFi IP |
-| 用户 | `devuser` |
+| 用户 | **`root`**（`sshd_config` 里是 `AllowUsers=root`） |
 | 端口 | 22 |
-| 提权 | `__root <命令>` |
+| 客户端 | 必须支持 `ssh-rsa`：本仓库 `scripts/bbssh`，或 Termius 等可配置的老客户端 |
+
+> 想用系统 `ssh` 直连需要 OpenSSH 9.x 及更早版本，10 之后无解。
 
 **建议改成自己的密钥**，默认私钥是公开的，等于谁都能登。
 

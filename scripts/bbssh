@@ -1,0 +1,87 @@
+#!/bin/bash
+# bbssh —— 黑莓 BB10 root 一键 SSH（绕过 OpenSSH 10 与 QNX sshd 6.2 的算法不兼容）
+#
+# 用法：
+#   ./bbssh                     进入交互式 shell
+#   ./bbssh "命令"              执行单条命令
+#   ./bbssh -c id               同上
+#
+# 原理：设备上的 sshd 是 2013 年的 OpenSSH 6.2，只支持 ssh-rsa(SHA-1) 签名；
+#       macOS 自带 OpenSSH 10 已彻底移除该算法，所以直连必然失败。
+#       这里用 nc 做本地中转（系统二进制有本地网络权限），
+#       再用支持 ssh-rsa 的 paramiko 3.x 完成握手。
+
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYLIB="${BB10_PYLIB:-/tmp/pk3}"
+HOST="${BB10_HOST:-169.254.0.1}"
+PORT_RELAY="${BB10_RELAY_PORT:-2233}"
+
+# --- 找私钥 ---
+KEY="${BB10_KEY:-}"
+if [ -z "$KEY" ]; then
+  for cand in "$DIR/id_rsa4x" "$DIR/../bb10-root/id_rsa4x" "$DIR/../../bb10-root/id_rsa4x" "$HOME/bb10-root/id_rsa4x"; do
+    [ -f "$cand" ] && KEY="$cand" && break
+  done
+fi
+if [ -z "$KEY" ] || [ ! -f "$KEY" ]; then
+  echo "找不到私钥 id_rsa4x" >&2
+  echo "下载：curl -LO https://bb10.root.sx/downloads/id_rsa4x && chmod 600 id_rsa4x" >&2
+  echo "或用 BB10_KEY=/path/to/id_rsa4x 指定" >&2
+  exit 1
+fi
+if ! PYTHONPATH="$PYLIB" python3 -c "import paramiko" 2>/dev/null; then
+  echo "→ 首次运行，安装 paramiko 3.5.1（支持 ssh-rsa）"
+  pip3 install --quiet --target "$PYLIB" "paramiko==3.5.1" || { echo "安装失败"; exit 1; }
+fi
+
+# --- 探测设备 ---
+if ! nc -z -G 2 "$HOST" 22 2>/dev/null; then
+  echo "连不上 $HOST:22" >&2
+  echo "检查：手机是否开机、USB 线是否插着、'设置→存储和访问' 里 USB 连接是否启用" >&2
+  exit 2
+fi
+
+# --- 启动本地中转 ---
+RELAY="/tmp/bb10_relay_$$"
+rm -f "$RELAY"; mkfifo "$RELAY"
+(nc -l "$PORT_RELAY" < "$RELAY" | nc "$HOST" 22 > "$RELAY") &
+NC_PID=$!
+trap 'kill $NC_PID 2>/dev/null; rm -f "$RELAY"' EXIT
+sleep 1
+
+CMD=("$@")
+exec 3<&0
+PYTHONPATH="$PYLIB" BB10_RELAY_PORT="$PORT_RELAY" BB10_KEY="$KEY" BB10_ARGV="$(printf '%s\x1f' "${CMD[@]}")" python3 - <<'PY'
+import os, sys, socket, paramiko
+port = int(os.environ["BB10_RELAY_PORT"])
+key  = paramiko.RSAKey.from_private_key_file(os.environ["BB10_KEY"])
+argv = [a for a in os.environ.get("BB10_ARGV", "").split("\x1f") if a]
+cmd  = " ".join(argv).strip()
+
+s = socket.socket(); s.settimeout(20); s.connect(("127.0.0.1", port))
+t = paramiko.Transport(s, disabled_algorithms={"pubkeys": ["rsa-sha2-512", "rsa-sha2-256"]})
+t.start_client(timeout=20)
+t.auth_publickey("root", key)          # sshd_config 里是 AllowUsers=root
+
+if not cmd:
+    cmd = "exec /bin/sh -i"             # 交互 shell
+
+ch = t.open_session()
+ch.get_pty(width=200, height=50)
+ch.exec_command(cmd)
+
+out = ch.makefile("rb", -1)
+try:
+    while True:
+        data = out.read(4096)
+        if not data:
+            break
+        sys.stdout.buffer.write(data); sys.stdout.buffer.flush()
+except KeyboardInterrupt:
+    pass
+finally:
+    try: ch.close()
+    except Exception: pass
+    t.close()
+PY
