@@ -64,6 +64,36 @@ root 本身**不会**提升兼容性，也不会升级 Runtime 版本。网上�
 
 ---
 
+**Q：系统里找不到 AppWorld / 黑莓世界，有影响吗？**
+
+分两层看：
+
+- **当商店用**：没影响。2022 年 1 月 4 日就停服了，图标点开也是白屏或者报网络错误。
+- **当 root 跳板用**：有影响，**这个应用绝对不能删**。
+
+v4 的动态库劫持是这样的：把 `libslog2.so.1` 塞进
+`/apps/sys.appworld.<hash>/native/lib/`，只有当 **AppWorld 进程启动**时，
+这个库才会被加载，加载时才执行「拉起 sshd、放开 root 权限」那段代码。
+
+所以「图标看不见」和「应用不存在」是两件事 —— 图标没了无所谓，
+`/apps/sys.appworld.*` 这个目录必须留着。
+
+自查一下：
+
+```bash
+./scripts/bbssh "ls /apps/sys.appworld*/native/lib/"
+# 正常应该有 libslog2.so.1
+```
+
+**重启后 SSH 连不上**（AppWorld 没自启时会出现）：
+在手机上手动打开一次 BlackBerry World，哪怕它报网络错误、白屏，
+触发链跑完 sshd 就起来了，再连就行。
+
+真删了/刷坏了：把工具自带的 `patchdata/appworld.bar` 推回设备重装，
+或者重新生成 root 包重刷一遍。
+
+---
+
 **Q：刷机会掉运营商锁吗？**
 
 不会。SIM 锁在 NVRAM 里，和系统无关。
