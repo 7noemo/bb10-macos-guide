@@ -45,6 +45,25 @@ thurask 维护的全机型存档，最新完整版就是 **10.3.3.3216**。
 | `OSINFO.txt` | ✅ 要，里面有每个文件的 SHA 校验值 |
 | `.asc` | ❌ 不用，PGP 签名文件，校验用的，普通人可以忽略 |
 
+### 10.3.3.3216 已知的直链和哈希（实测可用）
+
+社区里流传的链接都是同一批，下面这份是 2026-11 实测能下通的：
+
+| 机型 | 文件名 | 大小 | SHA-256（.7z） |
+|---|---|---|---|
+| **Z30 / Classic(Q20) / Leap** | `Z30_10.3.03.3216_STA100-1-2-3-4-5-6.7z` | 1,592,660,159 | `bae7cd04b5376e82aa85edbf915996e06d90cea3f6747cd99207b5354a3d57f8` |
+| Q10 / Q5 / P9983 | `Q10_10.3.03.3216_SQN100-1-2-3-4-5.7z` | 1,569,051,774 | 见 OSINFO.txt |
+| Passport | `Passport_10.3.03.3216_SQW100-1-2-3-4.7z` | 1,572,841,956 | 见 OSINFO.txt |
+
+Z30 那份的 MEGA 直链（**密钥是完整的 43 字符，抄漏一个就解出乱码**）：
+
+```
+https://mega.nz/file/tVgyjDYS#ojnru-l0Apt1289OrZ7zDkvvxzFtfCIkAU1dIybpHK0
+```
+
+> 论坛帖子里的链接常被截断成 `...ojnru-l0A...CIkAU1dIybpHK0` 这种形式，
+> 照着抄一定失败。看到 `...` 就当没看见，去原帖复制完整地址。
+
 ### ② pb-appstore · BB10 Resources（国内访问最稳）
 
 <https://pb-appstore.netlify.app/resources>
@@ -87,16 +106,37 @@ curl -L -C - --proxy http://127.0.0.1:7890 -o xxx.exe "链接"
 
 MEGA 在国内直连基本废，走代理能快十倍。
 
-### 7z 压缩包解压
+### ⚠️ MEGA 的两个坑（下载 1.5 GB 必踩）
 
-macOS 自带 Archive Utility 解不了某些 7z，装个正经的：
+1. **直链是 IP 绑定的**。换节点 = 403，代理自动换 IP 也会 403。
+   所以「先取链接、再切节点下载」一定失败，必须**同一个 IP 上取链接并下载完**。
+2. **同一 IP 有免费额度**。下到一半报 `509 Bandwidth Limit Exceeded`，
+   说明这个出口的额度用完了，换节点 + 用 Range 续传就行（MEGA 用 AES-CTR，密文和明文等长，任意字节都能独立续传）。
+
+手动处理很痛苦，仓库里带了个脚本：
 
 ```bash
-brew install sevenzip
-7z x Passport_10.3.03.3216_SQW100-1-2-3-4.7z
+python3 scripts/mega-fetch.py \
+  --url "https://mega.nz/file/tVgyjDYS#ojnru-l0Apt1289OrZ7zDkvvxzFtfCIkAU1dIybpHK0" \
+  --out ./Z30_3216.7z
 ```
 
-或者装图形界面的 [Keka](https://www.keka.io/)。
+它会自动切节点、自动续传、下完自动解密（MEGA 的 key 前 16 字节还要和后 16 字节异或才是真正的 AES 密钥，这点和大部分教程写的不一样）。
+
+实测：香港节点 2 MB/s，1.48 GB 用了 16 分钟，中途被换了 3 次节点。
+
+### 7z 压缩包解压
+
+⚠️ 这批 autoloader 的 7z 用了 **BCJ2 过滤器**，`py7zr`、macOS 自带 Archive Utility、部分老版本 7z 都解不了，会报 `UnsupportedCompressionMethod`。
+
+```bash
+# 官方 7-Zip 命令行版，arm64 原生
+curl -L -o 7z.tar.xz https://www.7-zip.org/a/7z2301-mac.tar.xz
+tar xf 7z.tar.xz
+./7zz x Z30_10.3.03.3216_STA100-1-2-3-4-5-6.7z
+```
+
+Homebrew 能用的机器直接 `brew install sevenzip` 也行，图形界面用 [Keka](https://www.keka.io/) 也可以。
 
 ---
 

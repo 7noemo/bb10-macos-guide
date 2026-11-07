@@ -45,6 +45,7 @@ cd bb10-macos-guide
 | 5 | [Root 之后玩什么](docs/05-post-root.md) | 终端、SSH、第三方应用 |
 | 6 | [出问题了](docs/06-troubleshooting.md) | 对症下药 |
 | 7 | [常见问题](docs/07-faq.md) | 你可能会问的 |
+| 8 | [Classic / Q20 实操记录](docs/08-classic-q20.md) | 一次真机全流程（含实测耗时与校验值） |
 
 ---
 
