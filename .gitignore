@@ -1,0 +1,14 @@
+# bb10-root/ 是 setup.sh 生成的运行时目录，不入库
+bb10-root/
+
+# macOS
+.DS_Store
+._*
+
+# 大文件
+*.exe
+*.signed
+*.zip
+*.7z
+*.tar.gz
+*.tar.bz2
