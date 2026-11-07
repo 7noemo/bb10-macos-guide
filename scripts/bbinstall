@@ -1,0 +1,223 @@
+#!/bin/bash
+# bbinstall —— 在已 root 的 BB10 上安装 / 卸载 .bar（未签名包同样适用）
+#
+# 用法：
+#   ./bbinstall app.bar                  安装（推到 /var/rootdata/app.bar）
+#   ./bbinstall app.bar /var/rootdata/x.bar   安装到指定路径
+#   ./bbinstall -r <包ID>                 卸载
+#   ./bbinstall -l                       列出已装的非系统应用
+#
+# 原理（BB10 真正的安装通道是 PPS job，不是 /var/rootdata/installer）：
+#   往 /pps/system/installer/upd/current/job.<名> 写：
+#       action::install
+#       package_location::<包绝对路径>
+#       extras::
+#   系统 installer 服务消费这个 job 后注册应用，job 里回写 progress::100 表示成功。
+#   卸载用：
+#       action::uninstall
+#       package_id::<包ID>
+#       extras::
+#   签名校验由 /etc/system/config/sud.cfg 的 [installer] module = unsigned 关闭，
+#   AutoRoot v4 刷入时已经改好，所以未签名 bar 也能装。
+#
+# 坑：/var/rootdata/installer 是 AutoRoot 自带的简易解包器，只会把包解到
+#     /var/addons/<名字>，不注册应用 —— 别用它装 bar。
+
+set -u
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYLIB="${BB10_PYLIB:-/tmp/pk3}"
+HOST="${BB10_HOST:-169.254.0.1}"
+PORT_RELAY="${BB10_RELAY_PORT:-2234}"
+KEY=""
+for cand in "$DIR/id_rsa4x" "$DIR/../bb10-root/id_rsa4x" "$DIR/../../bb10-root/id_rsa4x" "$HOME/bb10-root/id_rsa4x"; do
+  if [ -f "$cand" ]; then KEY="$cand"; break; fi
+done
+
+MODE="install"
+case "${1:-}" in
+  -r|--remove) MODE="remove"; shift ;;
+  -l|--list)   MODE="list";   shift ;;
+  -h|--help|"") sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+ARG="${1:-}"
+REMOTE="${2:-}"
+if [ -z "$ARG" ] && [ "$MODE" != "list" ]; then
+  echo "用法: ./bbinstall <文件.bar> | -r <包ID> | -l" >&2; exit 1
+fi
+
+if [ "$MODE" = "install" ]; then
+  [ -f "$ARG" ] || { echo "找不到文件: $ARG" >&2; exit 1; }
+  REMOTE="${REMOTE:-/var/rootdata/$(basename "$ARG")}"
+fi
+
+[ -n "$KEY" ] && [ -f "$KEY" ] || { echo "找不到私钥 id_rsa4x（放在 bb10-root/ 或 ~/bb10-root/）" >&2; exit 1; }
+if ! PYTHONPATH="$PYLIB" python3 -c "import paramiko" 2>/dev/null; then
+  echo "→ 首次运行，安装 paramiko 3.5.1（支持 ssh-rsa）"
+  pip3 install --quiet --target "$PYLIB" "paramiko==3.5.1" || { echo "安装失败"; exit 1; }
+fi
+
+if ! nc -z -G 2 "$HOST" 22 2>/dev/null; then
+  echo "连不上 $HOST:22" >&2
+  echo "检查：手机是否开机、USB 线是否插着；重启后若连不上，先在手机上打开一次 BlackBerry World 触发 root 链" >&2
+  exit 2
+fi
+
+RELAY="/tmp/bb10_relay_$$"
+rm -f "$RELAY"; mkfifo "$RELAY"
+(nc -l "$PORT_RELAY" < "$RELAY" | nc "$HOST" 22 > "$RELAY") &
+NC_PID=$!
+trap 'kill $NC_PID 2>/dev/null; rm -f "$RELAY"' EXIT
+sleep 1
+
+PYTHONPATH="$PYLIB" BB10_RELAY_PORT="$PORT_RELAY" BB10_KEY="$KEY" \
+BB10_MODE="$MODE" BB10_ARG="$ARG" BB10_REMOTE="$REMOTE" python3 - <<'PY'
+import os, sys, io, time, socket, zipfile, paramiko
+
+mode   = os.environ["BB10_MODE"]
+arg    = os.environ["BB10_ARG"]
+remote = os.environ["BB10_REMOTE"]
+port   = int(os.environ["BB10_RELAY_PORT"])
+key    = paramiko.RSAKey.from_private_key_file(os.environ["BB10_KEY"])
+
+s = socket.socket(); s.settimeout(30); s.connect(("127.0.0.1", port))
+t = paramiko.Transport(s, disabled_algorithms={"pubkeys": ["rsa-sha2-512", "rsa-sha2-256"]})
+t.start_client(timeout=30)
+t.auth_publickey("root", key)
+
+def run(cmd):
+    ch = t.open_session(); ch.exec_command(cmd)
+    out = ch.makefile("rb", -1)
+    buf = []
+    while True:
+        d = out.read(4096)
+        if not d:
+            break
+        buf.append(d)
+    ch.recv_exit_status(); ch.close()
+    return b"".join(buf).decode("utf-8", "replace")
+
+# ---------- 列表 ----------
+if mode == "list":
+    out = run("ls -d /apps/* 2>/dev/null")
+    rows = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        base = os.path.basename(line)
+        if base.startswith("sys."):
+            continue
+        rows.append(base)
+    print("已装的非系统应用（%d 个）：" % len(rows))
+    for r in sorted(rows):
+        print("  " + r)
+    t.close(); sys.exit(0)
+
+# ---------- 卸载 ----------
+if mode == "remove":
+    pid = arg
+    if os.path.isfile(arg):
+        try:
+            with zipfile.ZipFile(arg) as z:
+                for line in z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace").splitlines():
+                    if line.lower().startswith("package-id:"):
+                        pid = line.split(":", 1)[1].strip()
+        except Exception:
+            pass
+    print("→ 卸载包 ID: %s" % pid)
+    job_path = "/pps/system/installer/upd/current/job.%s" % pid
+    job = "action::uninstall\npackage_id::%s\nextras::\n" % pid
+    sf = paramiko.SFTPClient.from_transport(t)
+    try:
+        sf.putfo(io.BytesIO(job.encode()), job_path)
+    except IOError as e:
+        if "size mismatch" not in str(e):
+            print("! 写 job 失败: %s" % e); sys.exit(3)
+    try:
+        sf.chmod(job_path, 0o666)
+    except Exception:
+        pass
+    sf.close()
+    ok = False
+    for _ in range(20):
+        time.sleep(2)
+        if not run("ls -d /apps/*%s* 2>/dev/null" % pid.replace("-", ".")).strip():
+            ok = True
+            break
+    print("✓ 已卸载" if ok else "! 没卸掉，看看 %s 里的 result::" % job_path)
+    t.close(); sys.exit(0 if ok else 4)
+
+# ---------- 安装 ----------
+pid = name = None
+sigs = []
+try:
+    with zipfile.ZipFile(arg) as z:
+        mf = z.read("META-INF/MANIFEST.MF").decode("utf-8", "replace")
+        sigs = [n for n in z.namelist()
+                if n.startswith("META-INF/") and n.endswith((".SF", ".EC", ".RSA"))]
+    for line in mf.splitlines():
+        low = line.lower()
+        if low.startswith("package-id:"):
+            pid = line.split(":", 1)[1].strip()
+        elif low.startswith("package-name:"):
+            name = line.split(":", 1)[1].strip()
+except Exception as e:
+    print("! 无法解析 bar 清单（可能不是标准 BB10 bar）: %s" % e)
+
+print("→ 包名: %s" % (name or "未知"))
+print("→ 包 ID: %s" % (pid or "未知"))
+print("→ 签名: %s" % ("已签名" if sigs else "无签名（靠 sud.cfg unsigned 放行）"))
+print("→ 目标: %s" % remote)
+
+sf = paramiko.SFTPClient.from_transport(t)
+size = os.path.getsize(arg)
+print("↑ 上传中 (%.1f MB) ..." % (size / 1048576.0))
+sf.put(arg, remote)
+try:
+    sf.chmod(remote, 0o666)
+except Exception:
+    pass
+print("✓ 上传完成")
+
+job_path = "/pps/system/installer/upd/current/job.%s" % os.path.basename(remote)
+job = "action::install\npackage_location::%s\nextras::\n" % remote
+try:
+    sf.putfo(io.BytesIO(job.encode()), job_path)
+except IOError as e:
+    if "size mismatch" not in str(e):
+        print("! 写 job 失败: %s" % e); sys.exit(3)
+try:
+    sf.chmod(job_path, 0o666)
+except Exception:
+    pass
+sf.close()
+print("✓ 已提交安装任务")
+
+result = ""
+for _ in range(40):
+    time.sleep(2)
+    st = run("cat %s 2>/dev/null" % job_path)
+    if "progress::100" in st or "result::failure" in st:
+        result = st
+        break
+
+print("\n--- job 状态 ---")
+print(result.strip() or "(无回写)")
+
+target = run("ls -d /apps/%s.* 2>/dev/null" % name).strip() if name else ""
+if "result::failure" in result:
+    print("\n! 安装被拒绝，原因见上面 result:: 那行")
+    t.close(); sys.exit(4)
+if target:
+    print("--- 安装目录 ---")
+    print(target)
+    print("\n✓ 安装成功：%s" % (name or ""))
+else:
+    print("\n! 没看到应用目录。常见原因：")
+    print("  - 不是 BB10 用的 bar（PlayBook 的 bar、或者其实是 apk）")
+    print("  - 包 ID / 版本号不合法，或与已装应用冲突")
+    print("  - 重启过手机但 root 链没拉起（先在手机上打开一次 BlackBerry World）")
+    t.close(); sys.exit(4)
+t.close()
+PY

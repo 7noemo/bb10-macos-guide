@@ -46,6 +46,7 @@ cd bb10-macos-guide
 | 6 | [出问题了](docs/06-troubleshooting.md) | 对症下药 |
 | 7 | [常见问题](docs/07-faq.md) | 你可能会问的 |
 | 8 | [Classic / Q20 实机记录](docs/08-classic-q20.md) | **一台 SQC100-3 从零刷到 root 的完整实录**（含所有坑） |
+| 9 | [安装未签名的 BAR](docs/09-install-bar.md) | 装社区应用、卸载、排错（附 `bbinstall` 脚本） |
 
 ### 已在真机验证
 
